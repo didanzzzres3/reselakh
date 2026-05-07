@@ -14,7 +14,9 @@ export default function ProductsPage() {
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
-  const [form, setForm] = useState({ categoryId: "", name: "", description: "", price: 0, image: "", banner: "" });
+  const [form, setForm] = useState({ categoryId: "", name: "", code: "", description: "", price: 0, image: "", banner: "" });
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const fetchData = async () => {
     const [pRes, cRes] = await Promise.all([fetch("/api/user/products"), fetch("/api/user/categories")]);
@@ -25,9 +27,28 @@ export default function ProductsPage() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchData(); }, []);
 
+  const openAdd = () => {
+    setForm({ categoryId: "", name: "", code: "", description: "", price: 0, image: "", banner: "" });
+    setError(null);
+    setModal(true);
+  };
+
   const handleAdd = async () => {
-    await fetch("/api/user/products", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
-    setModal(false); fetchData();
+    setError(null);
+    setSaving(true);
+    const res = await fetch("/api/user/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(form),
+    });
+    const data = await res.json().catch(() => ({}));
+    setSaving(false);
+    if (!res.ok) {
+      setError(data.error || "Gagal menyimpan produk");
+      return;
+    }
+    setModal(false);
+    fetchData();
   };
 
   const handleDelete = async (id: string) => {
@@ -40,7 +61,7 @@ export default function ProductsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div><h1 className="text-2xl font-bold">Produk</h1><p className="text-sm text-gray-500">Kelola produk digital Anda</p></div>
-        <button onClick={() => setModal(true)} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium text-sm"><Plus className="w-4 h-4" /> Tambah Produk</button>
+        <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium text-sm"><Plus className="w-4 h-4" /> Tambah Produk</button>
       </div>
 
       {loading ? <Spinner /> : (
@@ -74,11 +95,22 @@ export default function ProductsPage() {
               <div className="space-y-3">
                 <select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent"><option value="">Pilih Kategori</option>{categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
                 <input placeholder="Nama Produk" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent" />
+                <div>
+                  <input
+                    placeholder="Kode Produk (contoh: NETFLIX)"
+                    value={form.code}
+                    onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, "") })}
+                    maxLength={50}
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent font-mono"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">Huruf/angka/<code>-_</code>, unik per akun (auto-UPPERCASE).</p>
+                </div>
                 <textarea placeholder="Deskripsi" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent resize-none" />
                 <input type="number" placeholder="Harga" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent" />
                 <input placeholder="URL Gambar (opsional)" value={form.image} onChange={(e) => setForm({ ...form, image: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent" />
                 <input placeholder="URL Banner (opsional)" value={form.banner} onChange={(e) => setForm({ ...form, banner: e.target.value })} className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-transparent" />
-                <button onClick={handleAdd} className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium">Simpan</button>
+                {error && <p className="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 p-2 rounded-lg">{error}</p>}
+                <button onClick={handleAdd} disabled={saving} className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium disabled:opacity-60">{saving ? "Menyimpan…" : "Simpan"}</button>
               </div>
             </motion.div>
           </motion.div>
