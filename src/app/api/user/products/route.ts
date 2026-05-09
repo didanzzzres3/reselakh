@@ -12,14 +12,43 @@ const codeSchema = z
   .max(50, "Kode produk terlalu panjang")
   .regex(/^[A-Za-z0-9_-]+$/, "Kode produk hanya boleh huruf/angka/tanda - dan _");
 
+const configSchema = z
+  .object({
+    terms: z.string().max(2000).optional(),
+    shortDescription: z.string().max(500).optional(),
+    cashbackType: z.enum(["nominal", "percent"]).optional(),
+    cashbackValue: z.number().finite().min(0).max(100_000_000).optional(),
+    profit: z.number().finite().min(0).max(100_000_000).optional(),
+    modeBulking: z.number().int().min(0).max(10_000).optional(),
+    stockFormat: z.string().max(120).optional(),
+    defaultAutoDelivery: z.boolean().optional(),
+  })
+  .strict()
+  .optional()
+  .nullable();
+
+// Accepts either a normal http(s) URL (capped 500 chars) or a data: URL up to
+// ~500KB so the drag-and-drop foto picker can store the image inline without a
+// separate upload endpoint.
+const imageSchema = z
+  .string()
+  .max(500_000)
+  .refine(
+    (s) => /^https?:\/\//i.test(s) || /^data:image\//i.test(s),
+    "Foto harus berupa URL http(s) atau data:image",
+  )
+  .optional()
+  .nullable();
+
 const CreateSchema = z.object({
   categoryId: idSchema,
   name: z.string().trim().min(1).max(120),
   code: codeSchema,
   description: z.string().max(2000).optional().nullable(),
   price: moneySchema,
-  image: z.string().url().max(500).optional().nullable(),
-  banner: z.string().url().max(500).optional().nullable(),
+  image: imageSchema,
+  banner: imageSchema,
+  config: configSchema,
 });
 
 const UpdateSchema = z.object({
@@ -29,9 +58,10 @@ const UpdateSchema = z.object({
   code: codeSchema.optional(),
   description: z.string().max(2000).optional().nullable(),
   price: moneySchema.optional(),
-  image: z.string().url().max(500).optional().nullable(),
-  banner: z.string().url().max(500).optional().nullable(),
+  image: imageSchema,
+  banner: imageSchema,
   isActive: z.boolean().optional(),
+  config: configSchema,
 });
 
 const DeleteSchema = z.object({ id: idSchema });
@@ -47,7 +77,29 @@ export async function GET() {
       },
       orderBy: { createdAt: "desc" },
     });
-    return NextResponse.json({ products });
+
+    const variationIds = products.flatMap((p) => p.variations.map((v) => v.id));
+    const soldGroup =
+      variationIds.length === 0
+        ? []
+        : await prisma.stock.groupBy({
+            by: ["variationId"],
+            where: { variationId: { in: variationIds }, isSold: true },
+            _count: { id: true },
+          });
+    const soldByVariation = new Map(soldGroup.map((g) => [g.variationId, g._count.id]));
+
+    const enriched = products.map((p) => {
+      const variationsWithSold = p.variations.map((v) => ({
+        ...v,
+        soldCount: soldByVariation.get(v.id) ?? 0,
+      }));
+      const soldCount = variationsWithSold.reduce((sum, v) => sum + v.soldCount, 0);
+      const stockCount = variationsWithSold.reduce((sum, v) => sum + v._count.stocks, 0);
+      return { ...p, variations: variationsWithSold, soldCount, stockCount };
+    });
+
+    return NextResponse.json({ products: enriched });
   } catch (err) {
     return handleApiError("user/products:GET", err);
   }
@@ -84,6 +136,7 @@ export async function POST(request: Request) {
           price: data.price,
           image: data.image ?? null,
           banner: data.banner ?? null,
+          config: data.config ? JSON.stringify(data.config) : null,
         },
       });
       return NextResponse.json({ success: true, product });
@@ -119,7 +172,8 @@ export async function PATCH(request: Request) {
       if (!category) throw new ValidationError("Kategori tidak ditemukan");
     }
 
-    const data: Record<string, unknown> = { ...rest };
+    const { config: configIn, ...restNoConfig } = rest;
+    const data: Record<string, unknown> = { ...restNoConfig };
     if (rest.name) {
       data.slug = await generateUniqueSlug(rest.name, async (s) => {
         const existing = await prisma.product.findFirst({
@@ -131,6 +185,9 @@ export async function PATCH(request: Request) {
     }
     if (rest.code) {
       data.code = rest.code.toUpperCase();
+    }
+    if (configIn !== undefined) {
+      data.config = configIn ? JSON.stringify(configIn) : null;
     }
 
     try {
